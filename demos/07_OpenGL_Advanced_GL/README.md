@@ -1,4 +1,4 @@
-## 04_OpenGL_Advanced_Rendering
+## 07_OpenGL_Advanced_Rendering
 
 这是一个基于 **OpenGL 3.3 Core Profile** 的学习型 Demo，参照 LearnOpenGL CN  
 **高级 OpenGL（深度测试 / 混合 / 面剔除 / 帧缓冲）** 内容完成。

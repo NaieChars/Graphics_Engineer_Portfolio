@@ -41,7 +41,7 @@
 
 - [进入项目](./demos/05_OpenGL_Advanced_Light)
   
-### 06. 高级渲染技术（深度 / 混合 / 帧缓冲）
+### 07. 高级渲染技术（深度 / 混合 / 帧缓冲）
 - **深度测试**（Depth Testing）与深度缓冲
 - **面剔除**（Back-face Culling）提升渲染效率
 - **透明物体混合**（Blending）
