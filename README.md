@@ -40,5 +40,17 @@
 - **动态光源运动**（绕物体旋转并上下起伏）
 
 - [进入项目](./demos/05_OpenGL_Advanced_Light)
+  
+### 06. 高级渲染技术（深度 / 混合 / 帧缓冲）
+- **深度测试**（Depth Testing）与深度缓冲
+- **面剔除**（Back-face Culling）提升渲染效率
+- **透明物体混合**（Blending）
+- 透明物体 **按距离排序**（Back-to-Front Rendering）
+- **帧缓冲对象**（Framebuffer Object, FBO）
+- **屏幕四边形**（Screen Quad）二次绘制
+- 双阶段渲染流程（Two-pass Rendering Pipeline）
+- 为后续后期处理打下基础
+
+- [进入项目](./demos/07_OpenGL_Advanced_GL)
 
 > 后续 demo 持续更新中……
