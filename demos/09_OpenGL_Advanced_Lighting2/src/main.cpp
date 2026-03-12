@@ -24,7 +24,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow* window);
 unsigned int loadTexture(const char* path);
 unsigned int loadCubemap(std::vector<std::string> faces);
-void RenderScene(const Shader& shader, const Shader& lightingShader);
+void RenderScene(const Shader& shader);
 void renderCube();
 void renderQuad();
 void SetupFramebuffers();
@@ -34,8 +34,8 @@ void ResolveMSAA();
 void RenderScreen(Shader& screenShader);
 void RenderLight(Shader& lightShader, glm::mat4& view, glm::mat4& projection);
 void renderPlane();
-void RenderFloor(Shader& shader, Shader& lightingShader);
-
+void RenderFloor(Shader& shader);
+void RenderCubes(Shader& shader);
 
 // 全局变量
 unsigned int planeVAO, planeVBO;
@@ -56,12 +56,12 @@ unsigned int screenTexture;
 unsigned int depthMapFBO;
 unsigned int depthMap;
 
-const unsigned int SHADOW_WIDTH = 2048;
-const unsigned int SHADOW_HEIGHT = 2048;
+const unsigned int SHADOW_WIDTH = 1024;
+const unsigned int SHADOW_HEIGHT = 1024;
 
 
 // 光源位置
-glm::vec3 lightPos = glm::vec3(0.0f, 0.3f, 0.0f);
+glm::vec3 lightPos = glm::vec3(0.0f, 0.7f, 0.0f);
 
 // 窗口设置
 const unsigned int SCR_WIDTH = 800;
@@ -150,7 +150,7 @@ int main()
 
 
 	// 加载纹理
-	cubeTexture = loadTexture("resources/textures/iron_block.png");
+	cubeTexture = loadTexture("resources/textures/gold_block.png");
 	floorTexture = loadTexture("resources/textures/wood.png");
 
 	
@@ -175,6 +175,9 @@ int main()
 		// 输入
 		processInput(window);
 
+		shader.use();
+		shader.setBool("blinn", blinn);
+
 		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom),
 			(float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
 		glm::mat4 view = camera.GetViewMatrix();
@@ -186,8 +189,8 @@ int main()
 		float near_plane = 1.0f, far_plane = 7.5f;
 
 		lightProjection = glm::ortho(
-			-10.0f, 10.0f,
-			-10.0f, 10.0f,
+			-2.0f, 2.0f,
+			-2.0f, 2.0f,
 			near_plane,
 			far_plane
 		);
@@ -207,9 +210,15 @@ int main()
 
 		ResolveMSAA();
 
+		//
+		screenShader.use();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, depthMap);
+		//
+
 		RenderScreen(screenShader);
 
-		std::cout << (blinn ? "Blinn-Phong" : "Phong") << std::endl;
+		// std::cout << (blinn ? "Blinn-Phong" : "Phong") << std::endl;
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -243,19 +252,18 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 
 // render相关函数------------------------------------------------------
 // 渲染地面
-void RenderFloor(Shader& shader, Shader& lightingShader)
+void RenderFloor(Shader& shader)
 {
-	if (shader.ID == lightingShader.ID)
-	{
+	
 		shader.setFloat("material.shininess", 32.0f);
 		shader.setVec3("light.specular", 0.3f, 0.3f, 0.3f);
 
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, floorTexture);
-	}
+	
 
 	glm::mat4 model = glm::mat4(1.0f);
-	model = glm::translate(model, glm::vec3(0.0f, -0.5f, 0.0f));
+	model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
 	shader.setMat4("model", model);
 
 	renderPlane();
@@ -300,17 +308,16 @@ void renderPlane()
 
 
 // 渲染所有立方体
-void RenderCubes(Shader& shader , Shader& lightingShader)
+void RenderCubes(Shader& shader)
 {
-	if (shader.ID == lightingShader.ID)
-	{
+	
+	
 		shader.setFloat("material.shininess", 500.0f);
 		shader.setVec3("light.specular", 1.0f, 1.0f, 1.0f);
 
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, cubeTexture);
 
-	}
 
 	glm::mat4 model;
 
@@ -401,10 +408,10 @@ void renderCube()
 	glBindVertexArray(0);
 }
 
-void RenderScene(Shader& shader, Shader& lightingShader)
+void RenderScene(Shader& shader)
 {
-	RenderFloor(shader, lightingShader);
-	RenderCubes(shader, lightingShader);
+	RenderFloor(shader);
+	RenderCubes(shader);
 }
 
 
@@ -428,7 +435,7 @@ void RenderLight(Shader& lightShader, glm::mat4& view, glm::mat4& projection)
 // 后期处理-----------------------------------------------------------
 void SetupFramebuffers()
 {
-	// 帧缓冲------------------------------------------
+	// 帧缓冲---------------------------
 	glGenFramebuffers(1, &framebuffer);
 	glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
@@ -525,8 +532,11 @@ void SetupFramebuffers()
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+	float borderColor[] = { 1.0,1.0,1.0,1.0 };
+	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
 	glFramebufferTexture2D(
@@ -540,11 +550,11 @@ void SetupFramebuffers()
 	glDrawBuffer(GL_NONE);
 	glReadBuffer(GL_NONE);
 
-	glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-		std::cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
-
+	{
+		std::cout << "Shadow FBO not complete!" << std::endl;
+	}
+	
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -557,9 +567,10 @@ void RenderShadowPass(Shader& simpleDepthShader, Shader& shader, glm::mat4 light
 
 	simpleDepthShader.use();
 	simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-	RenderScene(simpleDepthShader, shader);
+	RenderScene(simpleDepthShader);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
 }
 
 // 渲染真实场景
@@ -596,7 +607,7 @@ void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::m
 	shader.setInt("shadowMap", 1);
 	
 
-	RenderScene(shader, shader);
+	RenderScene(shader);
 	RenderLight(lightShader, view, projection);
 }
 
