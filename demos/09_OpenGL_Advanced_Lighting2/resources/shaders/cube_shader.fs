@@ -12,6 +12,7 @@ struct Material
 {
     sampler2D albedo;
     float shininess;
+    vec3 specular;
 };
 
 struct Light
@@ -81,18 +82,20 @@ void main()
     diffuse *= attenuation;
     specular *= attenuation;
 
+    // 计算阴影值
     float shadow = ShadowCalculation(fs_in.FragPosLightSpace);
-
     vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular);
 
-    FragColor = vec4(lighting * albedo, 1.0);
+    FragColor = vec4(lighting, 1.0);
 }
 
 
 
 float ShadowCalculation(vec4 fragPosLightSpace)
 {
+    // 透视除法
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    // 变换到0,1范围
     projCoords = projCoords * 0.5 + 0.5;
 
     if(projCoords.z > 1.0)
@@ -105,7 +108,7 @@ float ShadowCalculation(vec4 fragPosLightSpace)
     float closestDepth = texture(shadowMap, projCoords.xy).r;
     float currentDepth = projCoords.z;
 
-    float bias = 0.005;
+    float bias = 0.001;
 
     float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
 
