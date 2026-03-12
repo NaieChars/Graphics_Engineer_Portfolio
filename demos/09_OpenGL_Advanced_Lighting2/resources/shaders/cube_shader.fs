@@ -5,7 +5,6 @@ in VS_OUT {
     vec3 FragPos;
     vec3 Normal;
     vec2 TexCoords;
-    vec4 FragPosLightSpace;
 } fs_in;
 
 struct Material
@@ -31,12 +30,13 @@ struct Light
 uniform Material material;
 uniform Light light;
 
-uniform sampler2D shadowMap;
+uniform samplerCube shadowMap;
+uniform float far_plane;
 
 uniform vec3 viewPos;
 uniform bool blinn;
 
-float ShadowCalculation(vec4 fragPosLightSpace);
+float ShadowCalculation(vec3 fragPos);
 
 void main()
 {
@@ -83,7 +83,7 @@ void main()
     specular *= attenuation;
 
     // 计算阴影值
-    float shadow = ShadowCalculation(fs_in.FragPosLightSpace);
+    float shadow = ShadowCalculation(fs_in.FragPos);
     vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular);
 
     FragColor = vec4(lighting, 1.0);
@@ -91,26 +91,11 @@ void main()
 
 
 
-float ShadowCalculation(vec4 fragPosLightSpace)
+float ShadowCalculation(vec3 fragPos)
 {
-    // 透视除法
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    // 变换到0,1范围
-    projCoords = projCoords * 0.5 + 0.5;
-
-    if(projCoords.z > 1.0)
-        return 0.0;
-
-    if(projCoords.x < 0.0 || projCoords.x > 1.0 ||
-       projCoords.y < 0.0 || projCoords.y > 1.0)
-        return 0.0;
-
-    float closestDepth = texture(shadowMap, projCoords.xy).r;
-    float currentDepth = projCoords.z;
-
-    float bias = 0.001;
-
-    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
-
-    return shadow;
+    vec3 fragToLight = fragPos - light.position;
+    float closestDepth = texture(shadowMap, fragToLight).r * far_plane;
+    float currentDepth = length(fragToLight);
+    float bias = 0.05;
+    return currentDepth - bias > closestDepth ? 1.0 : 0.0;
 }

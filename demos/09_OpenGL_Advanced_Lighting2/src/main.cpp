@@ -28,8 +28,8 @@ void RenderScene(Shader& shader);
 void renderCube();
 void renderQuad();
 void SetupFramebuffers();
-void RenderShadowPass(Shader& simpleDepthShader, Shader& shader, glm::mat4 lightSpaceMatrix);
-void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::mat4 projection, glm::mat4 lightSpaceMatrix);
+void RenderShadowPass(Shader& simpleDepthShader, Shader& shader, float far_plane);
+void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::mat4 projection, float far_plane);
 void ResolveMSAA();
 void RenderScreen(Shader& screenShader);
 void RenderLight(Shader& lightShader, glm::mat4& view, glm::mat4& projection);
@@ -59,9 +59,10 @@ unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 2048;
 const unsigned int SHADOW_HEIGHT = 2048;
 
+float exposure = 1.0f;
 
 // 光源位置
-glm::vec3 lightPos = glm::vec3(0.0f, 7.0f, 0.0f);
+glm::vec3 lightPos = glm::vec3(0.0f, 0.0f, 0.0f);
 
 // 窗口设置
 const unsigned int SCR_WIDTH = 800;
@@ -136,7 +137,7 @@ int main()
 	glFrontFace(GL_CCW); // 默认定义正面为逆时针，若想改为顺时针正面用GL_CW
 	
 	// opengl 自动 gamma
-	glEnable(GL_FRAMEBUFFER_SRGB);
+	//glEnable(GL_FRAMEBUFFER_SRGB);
 
 	// 启用多重采样
 	glEnable(GL_MULTISAMPLE);
@@ -146,7 +147,11 @@ int main()
 	Shader shader("resources/shaders/cube_shader.vs", "resources/shaders/cube_shader.fs");
 	Shader screenShader("resources/shaders/screenShader.vs", "resources/shaders/screenShader.fs");
 	Shader lightShader("resources/shaders/lighting_cube.vs", "resources/shaders/lighting_cube.fs");
-	Shader simpleDepthShader("resources/shaders/shadow_mapping_depth.vs", "resources/shaders/shadow_mapping_depth.fs");
+	Shader simpleDepthShader(
+		"resources/shaders/shadow_mapping_depth.vs", 
+		"resources/shaders/shadow_mapping_depth.fs",
+		"resources/shaders/shadow_mapping_depth.gs"
+	);
 
 
 	// 加载纹理
@@ -167,13 +172,21 @@ int main()
 	//------------
 	while (!glfwWindowShouldClose(window))
 	{
-		// 在每一帧中计算出新的deltaTime以备后用
 		float currentFrame = static_cast<float>(glfwGetTime());
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 
-		// 输入
 		processInput(window);
+
+		float radius = 3.0f;  // 旋转半径
+		float speed = 2.0f;   // 旋转速度
+		float angle = glfwGetTime() * speed;
+
+		lightPos = glm::vec3(
+			cos(angle) * radius,  // X
+			0.0f,                  // Y
+			sin(angle) * radius   // Z
+		);
 
 		shader.use();
 		shader.setBool("blinn", blinn);
@@ -182,34 +195,15 @@ int main()
 			(float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
 		glm::mat4 view = camera.GetViewMatrix();
 
-		// 从光源视角渲染阴影贴图
-		glm::mat4 lightProjection, lightView;
-		glm::mat4 lightSpaceMatrix;
+		float far_plane = 20.0f;  // ← 只需要 far_plane，不再需要 lightSpaceMatrix
 
-		float near_plane = 0.1f, far_plane = 20.0f;
-
-		lightProjection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near_plane, far_plane);
-
-		lightView = glm::lookAt(
-			lightPos,
-			lightPos + glm::vec3(0, -1, 0),
-			glm::vec3(0.0f, 0.0f, 1.0f)
-		);
-
-		lightSpaceMatrix = lightProjection * lightView;
-
-
-		RenderShadowPass(simpleDepthShader, shader, lightSpaceMatrix);
+		RenderShadowPass(simpleDepthShader, shader, far_plane);  // ← 改成传 far_plane
 
 		glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
-		RenderScenePass(shader, lightShader, view, projection, lightSpaceMatrix);
+		RenderScenePass(shader, lightShader, view, projection, far_plane);  // ← 改成传 far_plane
 
 		ResolveMSAA();
-
-
 		RenderScreen(screenShader);
-
-		// std::cout << (blinn ? "Blinn-Phong" : "Phong") << std::endl;
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -437,7 +431,7 @@ void SetupFramebuffers()
 	glTexImage2DMultisample(
 		GL_TEXTURE_2D_MULTISAMPLE,
 		4,
-		GL_RGB,
+		GL_RGB16F,
 		800,
 		600,
 		GL_TRUE
@@ -482,12 +476,12 @@ void SetupFramebuffers()
 	glTexImage2D(
 		GL_TEXTURE_2D,
 		0,
-		GL_RGB,
+		GL_RGB16F,
 		800,
 		600,
 		0,
 		GL_RGB,
-		GL_UNSIGNED_BYTE,
+		GL_FLOAT,
 		NULL
 	);
 
@@ -505,113 +499,90 @@ void SetupFramebuffers()
 	// ----------------------------------
 	// shadow map
 	glGenFramebuffers(1, &depthMapFBO);
-
 	glGenTextures(1, &depthMap);
-	glBindTexture(GL_TEXTURE_2D, depthMap);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, depthMap);
 
-	glTexImage2D(
-		GL_TEXTURE_2D,
-		0,
-		GL_DEPTH_COMPONENT,
-		SHADOW_WIDTH,
-		SHADOW_HEIGHT,
-		0,
-		GL_DEPTH_COMPONENT,
-		GL_FLOAT,
-		NULL
-	);
+	for (unsigned int i = 0; i < 6; i++)
+		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT,
+			SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-	float borderColor[] = { 1.0,1.0,1.0,1.0 };
-	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-	glFramebufferTexture2D(
-		GL_FRAMEBUFFER,
-		GL_DEPTH_ATTACHMENT,
-		GL_TEXTURE_2D,
-		depthMap,
-		0
-	);
-
+	glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthMap, 0);
 	glDrawBuffer(GL_NONE);
 	glReadBuffer(GL_NONE);
-
-	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-	{
-		std::cout << "Shadow FBO not complete!" << std::endl;
-	}
-	
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 // 渲染阴影
-void RenderShadowPass(Shader& simpleDepthShader, Shader& shader, glm::mat4 lightSpaceMatrix)
+void RenderShadowPass(Shader& simpleDepthShader, Shader& shader, float far_plane)
 {
+	glm::mat4 shadowProj = glm::perspective(
+		glm::radians(90.0f), 1.0f, 0.1f, far_plane);
+
+	std::vector<glm::mat4> shadowMatrices = {
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1,0,0), glm::vec3(0,-1,0)),
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1,0,0), glm::vec3(0,-1,0)),
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0, 1,0), glm::vec3(0,0, 1)),
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0,-1,0), glm::vec3(0,0,-1)),
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0,0, 1), glm::vec3(0,-1,0)),
+		shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0,0,-1), glm::vec3(0,-1,0)),
+	};
+
 	glDisable(GL_FRAMEBUFFER_SRGB);
-	glEnable(GL_DEPTH_TEST);      
+	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
 	glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
 	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
 	glClear(GL_DEPTH_BUFFER_BIT);
-
-
 	glDisable(GL_CULL_FACE);
 
 	simpleDepthShader.use();
-	simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+	for (int i = 0; i < 6; i++)
+		simpleDepthShader.setMat4("shadowMatrices[" + std::to_string(i) + "]", shadowMatrices[i]);
+	simpleDepthShader.setVec3("lightPos", lightPos);
+	simpleDepthShader.setFloat("far_plane", far_plane);
 
 	RenderScene(simpleDepthShader);
 
 	glEnable(GL_CULL_FACE);
-
 	glEnable(GL_FRAMEBUFFER_SRGB);
-
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
 }
 
 // 渲染真实场景
-void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::mat4 projection, glm::mat4 lightSpaceMatrix)
+void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::mat4 projection, float far_plane)
 {
-	// 继续帧缓冲第一阶段
-	glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	glEnable(GL_DEPTH_TEST);
+    shader.use();
+    shader.setMat4("view", view);
+    shader.setMat4("projection", projection);
+    shader.setVec3("viewPos", camera.Position);
+    shader.setVec3("light.position", lightPos);
+    shader.setVec3("light.ambient", 0.05f, 0.05f, 0.05f);
+    shader.setVec3("light.diffuse", 1.0f, 1.0f, 1.0f);
+    shader.setFloat("light.constant", 1.0f);
+    shader.setFloat("light.linear", 0.09f);
+    shader.setFloat("light.quadratic", 0.032f);
+    shader.setFloat("far_plane", far_plane);  // ← 传 far_plane
 
-	glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    shader.setInt("material.albedo", 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, depthMap);  // ← 改成 CUBE_MAP
+    shader.setInt("shadowMap", 1);
 
-	shader.use();
-
-	shader.setMat4("view", view);
-	shader.setMat4("projection", projection);
-	shader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-
-	shader.setVec3("viewPos", camera.Position);
-
-	shader.setVec3("light.position", lightPos);
-	shader.setVec3("light.ambient", 0.05f, 0.05f, 0.05f);
-	shader.setVec3("light.diffuse", 1.0f, 1.0f, 1.0f);
-
-	shader.setFloat("light.constant", 1.0f);
-	shader.setFloat("light.linear", 0.09f);
-	shader.setFloat("light.quadratic", 0.032f);
-
-	
-	// 这里绑定 shadow map
-	shader.setInt("material.albedo", 0);
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, depthMap);
-	shader.setInt("shadowMap", 1);
-	
-
-	RenderScene(shader);
-	RenderLight(lightShader, view, projection);
+    RenderScene(shader);
+    RenderLight(lightShader, view, projection);
 }
 
 // MSAA->普通纹理
@@ -668,6 +639,7 @@ void RenderScreen(Shader& screenShader)
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	screenShader.use();
+	screenShader.setFloat("exposure", exposure);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, screenTexture);
 
@@ -701,6 +673,11 @@ void processInput(GLFWwindow* window)
 	{
 		blinnKeyPressed = false;
 	}
+
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+		exposure = std::max(0.1f, exposure - 0.01f);
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+		exposure += 0.01f;
 }
 
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
