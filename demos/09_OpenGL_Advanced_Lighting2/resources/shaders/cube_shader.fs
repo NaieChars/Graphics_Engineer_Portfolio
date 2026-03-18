@@ -11,6 +11,7 @@ struct Material
 {
     sampler2D albedo;
     sampler2D normalMap;
+    sampler2D specularMap;
     float shininess;
     vec3 specular;
 };
@@ -30,6 +31,7 @@ struct Light
 
 uniform Material material;
 uniform Light light;
+uniform Light light2;
 
 uniform samplerCube shadowMap;
 uniform float far_plane;
@@ -89,9 +91,43 @@ void main()
 
     
     float shadow = ShadowCalculation(fs_in.FragPos);
-    vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular);
+
+    // light2 计算（紫色光源=======================================
+    vec3 lightDir2 = normalize(light2.position - fs_in.FragPos);
+    float diff2 = max(dot(lightDir2, normal), 0.0);
+    vec3 diffuse2 = light2.diffuse * diff2 * albedo;
+
+    float spec2 = 0.0;
+    if(blinn)
+    {
+        vec3 halfwayDir2 = normalize(lightDir2 + viewDir);
+        spec2 = pow(max(dot(normal, halfwayDir2), 0.0), material.shininess);
+    }
+    else
+    {
+        vec3 reflectDir2 = reflect(-lightDir2, normal);
+        spec2 = pow(max(dot(viewDir, reflectDir2), 0.0), material.shininess);
+    }
+    vec3 specular2 = light2.specular * spec2;
+
+    float distance2 = length(light2.position - fs_in.FragPos);
+    float attenuation2 = 1.0 / (light2.constant + light2.linear * distance2 + light2.quadratic * distance2 * distance2);
+    diffuse2 *= attenuation2;
+    specular2 *= attenuation2;
+    //===================================================================
+
+    vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular) + diffuse2 + specular2;
+
+    
+    vec3 specularSample = texture(material.specularMap, fs_in.TexCoords).rgb;
+    float emissiveMask = specularSample.r;  // B 通道是自发光遮罩
+    emissiveMask = emissiveMask > 0.66 ? emissiveMask : 0.0;
+    vec3 emissive = albedo * emissiveMask * 10.0;  // 强度倍数自行调整
+    lighting += emissive;
 
     FragColor = vec4(lighting, 1.0);
+    //FragColor = vec4(albedo * emissiveMask * 10.0, 1.0);
+
 }
 
 

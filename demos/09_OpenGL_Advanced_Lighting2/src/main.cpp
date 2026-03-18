@@ -71,9 +71,11 @@ unsigned int blurColorBuffer1[BLOOM_LEVEL + 1];
 unsigned int blurColorBuffer2[BLOOM_LEVEL + 1];
 unsigned int blurColorBuffer3[BLOOM_LEVEL + 1];
 
+unsigned int cubeSpecularMap;  // 用来存 _s 贴图
+unsigned int defaultSpecularMap;
 //---------------------------------------------------------
 // 光源位置
-glm::vec3 lightPos = glm::vec3(0.0f, 0.0f, 0.0f);
+glm::vec3 lightPos = glm::vec3(0.0f, 1.0f, 0.0f);
 
 // 窗口设置
 const unsigned int SCR_WIDTH = 800;
@@ -168,10 +170,12 @@ int main()
 	cubeTexture = loadTexture("resources/textures/crying_obsidian.png");
 	floorTexture = loadTexture("resources/textures/wood.png");
 	cubeNormalMap = loadTexture("resources/textures/crying_obsidian_n.png");
+	cubeSpecularMap = loadTexture("resources/textures/crying_obsidian_s.png");
 
 	shader.use();
 	shader.setInt("material.albedo", 0);
 	shader.setInt("material.normalMap", 2);
+	shader.setInt("material.specularMap", 3);
 
 	screenShader.use();
 	screenShader.setInt("screenTexture", 0);
@@ -186,8 +190,13 @@ int main()
 	glBindTexture(GL_TEXTURE_2D, defaultNormalMap);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, defaultNormal);
 	//========================
-
-
+	// main 里加，创建一个 1x1 的全黑纹理
+	unsigned char blackPixel[] = { 0, 0, 0 };
+	glGenTextures(1, &defaultSpecularMap);
+	glBindTexture(GL_TEXTURE_2D, defaultSpecularMap);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, blackPixel);
+	//======================
+	
 	// 渲染循环
 	//-----------------------------------------
 	//-----------------------------------------
@@ -199,15 +208,17 @@ int main()
 
 		processInput(window);
 
+		/*
 		float radius = 3.0f;  // 旋转半径
 		float speed = 2.0f;   // 旋转速度
 		float angle = glfwGetTime() * speed;
 
 		lightPos = glm::vec3(
 			cos(angle) * radius,  // X
-			0.0f,                  // Y
+			0.3f,                  // Y
 			sin(angle) * radius   // Z
 		);
+		*/
 
 		shader.use();
 		shader.setBool("blinn", blinn);
@@ -263,7 +274,6 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 // 渲染地面
 void RenderFloor(Shader& shader)
 {
-
 	shader.setFloat("material.shininess", 32.0f);
 	shader.setVec3("light.specular", 0.3f, 0.3f, 0.3f);
 
@@ -272,6 +282,10 @@ void RenderFloor(Shader& shader)
 	// 地面暂时的纯蓝色法线贴图============
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, defaultNormalMap);
+	// 地面暂时加上黑色纹理（自发光）
+	glActiveTexture(GL_TEXTURE3);
+	glBindTexture(GL_TEXTURE_2D, defaultSpecularMap);
+	shader.setInt("material.specularMap", 3);
 	shader.setInt("material.normalMap", 2);
 
 	glm::mat4 model = glm::mat4(1.0f);
@@ -323,8 +337,6 @@ void renderPlane()
 // 渲染所有立方体
 void RenderCubes(Shader& shader)
 {
-
-
 	shader.setFloat("material.shininess", 500.0f);
 	shader.setVec3("light.specular", 1.0f, 1.0f, 1.0f);
 
@@ -332,7 +344,9 @@ void RenderCubes(Shader& shader)
 	glBindTexture(GL_TEXTURE_2D, cubeTexture);
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, cubeNormalMap);
-
+	glActiveTexture(GL_TEXTURE3);
+	glBindTexture(GL_TEXTURE_2D, cubeSpecularMap);
+	
 
 	glm::mat4 model;
 
@@ -754,11 +768,22 @@ void RenderScenePass(Shader& shader, Shader& lightShader, glm::mat4 view, glm::m
 	shader.setVec3("viewPos", camera.Position);
 	shader.setVec3("light.position", lightPos);
 	shader.setVec3("light.ambient", 0.05f, 0.05f, 0.05f);
-	shader.setVec3("light.diffuse", 2.0f, 2.0f, 2.0f);
+	shader.setVec3("light.diffuse", 2.0f, 2.0f, 1.0f);
 	shader.setFloat("light.constant", 1.0f);
 	shader.setFloat("light.linear", 0.09f);
 	shader.setFloat("light.quadratic", 0.032f);
 	shader.setFloat("far_plane", far_plane);  // ← 传 far_plane
+
+	// 紫色光源，放在 crying_obsidian 方块位置
+	glm::vec3 purpleLightPos = glm::vec3(-1.0f, 0.0f, -1.0f);  // cube1 的位置
+	shader.setVec3("light2.position", purpleLightPos);
+	shader.setVec3("light2.ambient", 0.05f, 0.0f, 0.08f);   // 淡紫色环境光
+	shader.setVec3("light2.diffuse", 0.8f, 0.0f, 1.5f);     // 紫色漫反射
+	shader.setVec3("light2.specular", 0.05f, 0.0f, 0.08f);    // 紫色高光
+	shader.setFloat("light2.constant", 1.0f);
+	shader.setFloat("light2.linear", 0.5f);       // 衰减快一点，只影响周围
+	shader.setFloat("light2.quadratic", 0.8f);
+
 
 	shader.setInt("material.albedo", 0);
 	glActiveTexture(GL_TEXTURE1);
@@ -971,3 +996,4 @@ unsigned int loadCubemap(std::vector<std::string> faces)
 
 	return textureID;
 }
+
