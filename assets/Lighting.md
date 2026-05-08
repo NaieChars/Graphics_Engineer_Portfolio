@@ -17,6 +17,7 @@
   - [10. Bloom](#10-bloom)
   - [11. Multi-scale Bloom, Karis Average And Soft Threshold](#11-multi-scale-bloom-karis-average-and-soft-threshold)
   - [12. Deferred Shading](#12-deferred-shading)
+  - [13. SSAO](#13-ssao)
 ---
 
 ## 1. Phong Lighting Model
@@ -1413,3 +1414,154 @@ RenderQuad();
 
 - **结合延迟渲染和前向渲染**
 由于 blending 需要对多个片段进行操作。而延迟渲染是对从 G缓冲中提取的单一片段进行操作，因此我们可以将两者结合渲染。
+- **更多优化方案**
+**Clustered Shading = 在 Tile-based 基础上引入深度划分**，使光源筛选从2D升级为3D，大幅提升光照计算效率和精度。这也是 UE5 在多光源处理时的思路，现在先暂时不深究。
+（此节后续仍有开发空间）
+
+---
+
+## 13. SSAO
+**屏幕空间环境光遮蔽（Screen-Space Ambient Occlusion, SSAO）** 原理：对于铺屏四边形上的每一个片段，我们根据周边的深度值计算一个**遮蔽因子（Occlusion Factor）**，这个遮蔽因子之后会被用来减少或抵消片段的环境光照分量。我们通过采集片段周围的 **法向半球体（Normal-oriented Hemisphere）** 的多个深度样本，并和当前深度值比较得到，高于片段深度值的样本个数就是我们想要的遮蔽因子。
+
+- **（1）法向半球体**
+简单来说，法向半球体用来描述这给点朝外能看见哪些方向。由于我们只关心外面的空间，所以只采样法线朝上的那一半空间。我们将在切线空间内生成采样核心
+
+<p align="center">
+  <img src="./markdown/SSAO1.png" width="500">
+</p>
+
+下面**生成一堆法向半球体里的随机采样点**
+
+```cpp
+.cpp
+// 随机数生成器
+std::uniform_real_distribution<GLfloat> randomFloats(0.0, 1.0);  // 生成 0 ~ 1 之间的随机数
+std::default_random_engine generator;
+
+// 生成一个随机方向，得到法向半球
+glm::vec3 sample(
+    randomFloats(generator) * 2.0 - 1.0, 
+    randomFloats(generator) * 2.0 - 1.0, 
+    randomFloats(generator)
+);
+
+// 归一化：变成单位方向向量
+sample = glm::normalize(sample);
+
+// 乘上一个随机长度，得到的点将从球表面转换到整个半球体里面，实现分布的随机化
+sample *= randomFloats(generator);
+
+// scale, 控制采样的分布，前面的点更密集，后面的点更远，实现中心密集分布
+float scale = float(i) / 64.0;
+scale = 0.1f + 0.9f * scale * scale; // 关键！
+sample *= scale;
+ssaoKernel.push_back(sample);
+```
+
+于是我们的得到了一个**大部分样本靠近原点的核心分布**
+
+<p align="center">
+  <img src="./markdown/SSAO2.png" width="500">
+</p>
+
+- **（2）随机核心转动**
+创建一个小的随机旋转向量纹理平铺到屏幕上
+
+```cpp
+.cpp
+// 我们创建一个 4 * 4 朝向切线空间平面法线的随机旋转向量数组：
+std::vector<glm::vec3> ssaoNoise;
+for (GLuint i = 0; i < 16; i++)
+{
+    glm::vec3 noise(
+        randomFloats(generator) * 2.0 - 1.0, 
+        randomFloats(generator) * 2.0 - 1.0, 
+        0.0f); 
+    ssaoNoise.push_back(noise);
+
+// 创建纹理
+GLuint noiseTexture; 
+glGenTextures(1, &noiseTexture);
+glBindTexture(GL_TEXTURE_2D, noiseTexture);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 4, 4, 0, GL_RGB, GL_FLOAT, &ssaoNoise[0]);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+}
+```
+
+- **SSAO着色器**
+
+我们需要存储SSAO阶段的结果，我们还要创建一个帧缓冲对象：
+```cpp
+.cpp
+GLuint ssaoFBO;
+glGenFramebuffers(1, &ssaoFBO);  
+glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+GLuint ssaoColorBuffer;
+
+glGenTextures(1, &ssaoColorBuffer);
+glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBuffer, 0);
+```
+由于环境遮蔽的结果是一个灰度值，我们将只需纹理的红色分量，我们将颜色缓冲的内部格式设为 GL_RED
+完整渲染阶段
+```cpp
+.cpp
+// 几何处理阶段: 渲染到G缓冲中
+glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
+    [...]
+glBindFramebuffer(GL_FRAMEBUFFER, 0);  
+
+// 使用G缓冲渲染SSAO纹理
+glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+    glClear(GL_COLOR_BUFFER_BIT);
+    shaderSSAO.Use();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gPositionDepth);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, gNormal);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    SendKernelSamplesToShader();
+    glUniformMatrix4fv(projLocation, 1, GL_FALSE, glm::value_ptr(projection));
+    RenderQuad();
+glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+// 光照处理阶段: 渲染场景光照
+glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+shaderLightingPass.Use();
+[...]
+glActiveTexture(GL_TEXTURE3);
+glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
+[...]
+RenderQuad();
+```
+shaderSSAO这个着色器将对应G缓冲纹理(包括线性深度)，噪声纹理和法向半球核心样本作为输入参数：
+
+```glsl
+.fs
+#version 330 core
+out float FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D gPositionDepth;
+uniform sampler2D gNormal;
+uniform sampler2D texNoise;
+
+uniform vec3 samples[64];
+uniform mat4 projection;
+
+// 屏幕的平铺噪声纹理会根据屏幕分辨率除以噪声大小的值来决定
+const vec2 noiseScale = vec2(800.0/4.0, 600.0/4.0); // 屏幕 = 800x600
+
+void main()
+{
+    [...]
+}
+
+```

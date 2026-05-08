@@ -1,5 +1,9 @@
 # Graphics Engineer Portfolio
 
+## Learning OpenGL Notes
+这里是我整理的关于图形学基本算法与工程常用技巧的部分笔记，后续会添加 PBR，GL等内容
+- [点击此处进入笔记](./assets/Lighting.md)
+
 ## OpenGL Learning Demos
 
 ### 01. 第一个彩色三角形
@@ -53,4 +57,4 @@
 
 - [进入项目](./demos/07_OpenGL_Advanced_GL)
 
-> 后续 demo 持续更新中……
+> 后续 部分 demo 处于开发状态，并未纳入其中……
